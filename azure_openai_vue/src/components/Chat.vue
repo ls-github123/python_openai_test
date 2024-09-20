@@ -47,7 +47,7 @@ export default {
     return {
       // 保存所有会话信息，包含每个会话的名称和消息记录
       chats: [
-        { name: '会话1', messages: ['消息内容'] },
+        { name: '会话1', messages: ['---- 会话内容 ----'] }, // 默认建立的会话和消息
       ],
       activeChat: null, // 当前激活的会话
       searchQuery: '', // 搜索框的输入内容
@@ -69,9 +69,9 @@ export default {
 
     // 新建会话，创建新会话并自动激活该会话
     startNewChat() {
-      const newChat = { name: `会话${this.chats.length + 1}`, messages: [] };
-      this.chats.push(newChat);
-      this.selectChat(newChat);
+      const newChat = { name: `会话${this.chats.length + 1}`, messages: ['---- 会话内容 ----'] }; // 添加默认消息
+      this.chats.push(newChat); // 将旧会话添加到会话列表中
+      this.selectChat(newChat); // 激活新会话
     },
 
     // 删除会话，从会话列表中移除指定的会话
@@ -135,11 +135,11 @@ export default {
     updateAssistantMessage(content) {
       if (this.activeChat) {
         // 如果最后一条消息不是助手的消息，则添加新的助手消息
-        if (!this.activeChat.messages[this.activeChat.messages.length - 1].startsWith('(GPT-4o):')) {
-          this.activeChat.messages.push(`(GPT-4o): ${content}`);
+        if (!this.activeChat.messages[this.activeChat.messages.length - 1].startsWith('<GPT-4o>:')) {
+          this.activeChat.messages.push(`<GPT-4o>: ${content}`);
         } else {
           // 如果最后一条已经是助手的消息，则更新这条消息
-          this.activeChat.messages[this.activeChat.messages.length - 1] = `(GPT-4o): ${content}`;
+          this.activeChat.messages[this.activeChat.messages.length - 1] = `<GPT-4o>: ${content}`;
         }
       }
     }
@@ -171,7 +171,7 @@ export default {
 }
 
 .search-input {
-  width: 100%;
+  width: 90%;
   padding: 8px;
   margin-bottom: 10px;
   border: 1px solid #444;

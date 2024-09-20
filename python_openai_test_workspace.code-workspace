@@ -1,0 +1,10 @@
+{
+	"folders": [
+		{
+			"path": "azure_openai_django"
+		},
+		{
+			"path": "azure_openai_vue"
+		}
+	]
+}

@@ -1,81 +1,151 @@
-import requests
 import time
 from django.http import StreamingHttpResponse
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from decouple import config
+import random
+from . import models
+from . import serializers
+from .utils import call_azure_openai_gpt4o # Azure_openai_got4o大模型调用封装
+from django.core.paginator import Paginator # 分页模块
 
-# 定义大模型API请求调用模块
+# GPT-4O模型测试调用视图
 class ChatView(APIView):
     def post(self, request):
         # 从请求中获取问题
-        question = request.data.get("question") # 获取问题内容
-        
+        question = request.data.get("question")
         if not question:
-            return Response({"error": "问题不能为空!"}, status=status.HTTP_400_BAD_REQUEST)
-
-        # 从环境变量.env文件中读取 API 密钥和终结点
-        api_key = config("AZURE_API_KEY") # 密钥
-        endpoint = config("AZURE_ENDPOINT") # 终结点
+            return Response({"error":"问题不能为空!"}, status=status.HTTP_400_BAD_REQUEST)
         
-        # 准备请求的消息内容
-        messages = [
-            {
-                "role": "user", # 定义消息发送者角色
-                "content": question # 消息的文本内容
-            }
-        ]
+        # 调用封装的 API 函数并处理返回结果
+        answer, error = call_azure_openai_gpt4o(question)
+        if error:
+            return Response({"error":error}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
-        # 定义请求头
-        headers = {
-            "Content-Type": "application/json",
-            "api-key": api_key,
-        }
-        
-        # 定义请求体
-        payload = {
-            "messages": messages, # 列表 包含对话的历史内容, 包含用户发送的问题
-            # temperature 控制模型生成文本的随机性(取值0-1) 
-            # 值越接近 0，模型的输出会更确定和一致 用于需要严格、精确回答的场景
-            # 值越接近 1，输出会更具随机性和创造性，适合生成更具创意的内容
-            # 0.7 表示输出有一定程度的随机性，但不会过于发散，适合对话生成
-            "temperature": 0.7,
-            # top_p 核采样参数 限制模型考虑的词汇范围 (范围0-1)
-            # top_p = 1 时，模型会考虑所有可能的词汇
-            # top_p 值较小时，模型会限制输出为可能性最高的几个词汇
-            "top_p": 0.95,
-            # max_toknes 限制生成最大的token数量
-            #（即单词或符号的基本单位，包含字母、标点符号等）
-            # 800个token约等于 600-800 个单词
-            "max_tokens": 800 # 目前Microsoft_Azure API限制最大为1000
-        }
-
-        # 发送请求并处理响应
-        try:
-            # 使用request库向Microsoft_Azure服务器发送一个调用API的http_post请求
-            # endpoint - API请求地址(终结点)
-            # headers 包含HTTP请求头信息的字典
-            # json=payload 将请求体发送为JSON格式
-            response = requests.post(endpoint, headers=headers, json=payload)
-            response.raise_for_status()  # 检查请求是否成功
-            
-            # answer
-            # response.json() 将response对象转换为JSON格式
-            # .get("choices", [{}]) 从 JSON 对象中获取键为 "choices" 的数据
-            # get() 方法用于从字典中安全地获取键值对，如果 "choices" 不存在，则返回默认值 [{}]
-            # choices 通常是一个包含多个选项的列表，其中每个选项都代表模型生成的不同响应
-            # [0] 用来从 choices 列表中提取第一个元素。在多数情况下，choices 列表中只有一个选项，所以我们直接访问第一个（索引为 0）响应
-            answer = response.json().get("choices", [{}])[0].get("message", {}).get("content", "")
-            # 通过 StreamingHttpResponse 逐字返回响应(前端逐字接收 显示并生成内容)
-            # Content-Type 设置为标准流式数据传输类型 text/event-stream
-            return StreamingHttpResponse(self.stream_response(answer), content_type='text/event-stream')
-        # 处理请求错误
-        except requests.RequestException as e:
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
-    # 定义流式响应生成器
+        # 正常返回流式响应
+        # 通过 StreamingHttpResponse 逐字返回响应(前端逐字接收 显示并生成内容)
+        # Content-Type 设置为标准流式数据传输类型 text/event-stream
+        return StreamingHttpResponse(self.stream_response(answer), content_type='text/event-stream')
+    
+    # 定义一个流式生成器函数
+    # 逐字流式发送数据到前端,模拟逐字输效果
     def stream_response(self, text):
         for char in text:
-            yield f"data: {char}\n\n" # # SSE (Server-Sent Events) 格式
-            time.sleep(0.1)  # 控制字符输出的速度，模拟流式效果
+            # for循环 遍历传入的字符串 text 中的每一个字符 char
+            # text 为大模型或其他来源生成的完整回答
+            # for 循环逐一获取该字符串中的每个字符
+            yield f"data: {char}\n\n" # 格式化字符串 构造 Server-Sent Events (SSE) 数据格式
+            # yield 是一个 Python 生成器的关键字, 作用是逐次返回每个字符的处理结果
+            time.sleep(0.05) # 控制输出速度
+
+
+# 定义前端会话分类接口视图
+def generate_unique_code(): # 定义一个函数用于生成唯一的code
+    while True:
+        code = "t" + str(random.randint(100000, 999999))  # 生成6位随机数
+        if not models.CatesModel.objects.filter(code=code).exists():
+            return code  # 如果数据库中不存在该code，则返回
+
+# 会话分类接口视图
+class CatesView(APIView):
+    
+    # POST 方法：新建会话分类
+    def post(self, request):
+        # 查询是否有未命名的会话分类
+        cates = models.CatesModel.objects.filter(title__isnull=True).first()
+        if not cates:  # 如果没有未命名的会话分类
+            code = generate_unique_code()  # 生成唯一的 code
+            cates = models.CatesModel.objects.create(code=code)  # 创建新分类
+        return Response({"code": 200, "cateid": cates.code})
+
+    # GET 方法：获取所有会话分类的标题
+    def get(self, request):
+        # 获取搜索名称
+        stitle = request.GET.get('title')
+        if stitle:
+            # 如果有搜索条件，进行过滤
+            cates = models.CatesModel.objects.exclude(title__isnull=True).filter(title__startswith=stitle).order_by('-creation_time').all()
+        else:
+            # 获取所有已命名的会话分类，并按时间排序，最新的在前
+            cates = models.CatesModel.objects.exclude(title__isnull=True).order_by('-creation_time').all()
+
+        # 序列化数据
+        ser = serializers.CatesSerializers(cates, many=True)
+        return Response({
+            "code": 200,
+            "clist": ser.data
+        }, status=status.HTTP_200_OK)
+    
+# 定义前端会话内容接口视图
+class QuestionsView(APIView):
+    def post(self, request):
+        # 接收参数
+        # 使用get方法获取参数, 避免抛出keyerror异常
+        ask = request.data.get('ask')
+        cateid = request.data.get('cateid')
+        
+        # 参数校验
+        if not ask:
+            return Response({"error":"问题不能为空!"}, status=status.HTTP_400_BAD_REQUEST)
+        if not cateid:
+            return Response({"error":"分类ID不能为空"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # 检查分类是否存在
+        cates = models.CatesModel.objects.filter(code=cateid).first()
+        if not cates:
+            # 如果分类不存在, 则创建新的分类并生成唯一code
+            code = generate_unique_code()
+            cates = models.CatesModel.objects.create(code=code)
+            
+        # 调用GPT-4O模型获取答案
+        answer, error = call_azure_openai_gpt4o(ask)
+        if error:
+            return Response({"error":error}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        # 更新分类名称(如果分类名为空)
+        cname = ''
+        if not cates.title:
+            cname = ask[:10] # 使用问题的前10个字符作为分类名称
+            cates.title = cname
+            cates.save()
+            
+        # 写入问答表
+        # 将会话问题及答案存入数据库
+        models.QuestionModel.objects.create(ask=ask, answer=answer, cid=cates)
+        return Response({"code":200, "catename":cname, "answer":answer})
+    
+    def get(self, request):
+        # 获取参数 cateid
+        cid = request.GET.get('cateid')
+        
+        # 参数校验
+        if not cid:
+            return Response({"error":"分类ID不能为空"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # 检查分类是否存在
+        if not models.CatesModel.objects.filter(code=cid).exists():
+            return Response({"error":"分类不存在"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # 获取该分类下的所有问题
+        ques = models.QuestionModel.objects.filter(cid_id=cid).order_by('-response_time')
+        
+        # 获取页码并进行校验
+        page_number = request.GET.get('page', 1)
+        try:
+            page_number = int(page_number)
+        except ValueError:
+            page_number = 1
+        # 添加分页模块
+        paginator = Paginator(ques, 10) # 每页显示10条数据
+        page_obj = paginator.get_page(page_number)
+        
+        # 调用序列化器处理
+        ser = serializers.QuestionSerializes(page_obj, many=True)
+        
+        # 返回分页后的数据
+        return Response({
+            "code":200,
+            "qlist":ser.data,
+            "current_page":page_obj.number,
+            "total_pages": paginator.num_pages,
+        })
